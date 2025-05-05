@@ -1,0 +1,494 @@
+{
+  "name": "Vendor Workflow Prototype",
+  "nodes": [
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/15umhxyT5pojeRS7pR_KcYFZp4JaHJ8f2hHURqql_rMg/edit?gid=63542712#gid=63542712",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet2",
+          "mode": "name"
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        560,
+        -100
+      ],
+      "id": "65be0bd1-c5fe-4d19-afae-fd0f90a34870",
+      "name": "Google Sheets",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Lz2wgjs5MqvirRfO",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Adjust this path to wherever your trigger node puts the channel\nconst channelId = items[0].json.body?.channel_id \n                || items[0].json.channel_id \n                || items[0].json.event?.channel;\n\nconst { results, query, matchType } = items[0].json;\n\n// No results\nif (!results || results.length === 0) {\n  const blocks = [\n    {\n      type: \"section\",\n      text: {\n        type: \"mrkdwn\",\n        text: `No vendors found matching *${query}*`\n      }\n    }\n  ];\n  return [{\n    json: {\n      slackMessage: {\n        channel: channelId,\n        text: `No vendors found matching \"${query}\"`,\n        blocks\n      }\n    }\n  }];\n}\n\n// Multiple results\nif (results.length > 1) {\n  const blocks = [\n    {\n      type: \"section\",\n      text: {\n        type: \"mrkdwn\",\n        text: `Found ${results.length} ${matchType} matches for *${query}*:`\n      }\n    },\n    // each vendor as its own section\n    ...results.map(vendor => ({\n      type: \"section\",\n      text: {\n        type: \"mrkdwn\",\n        text: `• *${vendor[\"Vendor Name\"]}*`\n      }\n    }))\n  ];\n\n  return [{\n    json: {\n      slackMessage: {\n        channel: channelId,\n        text: `Found ${results.length} matches for ${query}`,\n        blocks\n      }\n    }\n  }];\n}\n\n// Single result\nconst vendor = results[0];\nconst totalLicenses = parseInt(vendor['Total Licenses']) || 0;\nconst usedLicenses  = parseInt(vendor['Used Licenses'])  || 0;\nconst remainingLicenses = totalLicenses - usedLicenses;\n\nconst blocks = [\n  {\n    type: \"header\",\n    text: {\n      type: \"plain_text\",\n      text: vendor['Vendor Name']\n    }\n  },\n  {\n    type: \"section\",\n    fields: [\n      {\n        type: \"mrkdwn\",\n        text: `*Contact:*\\n${vendor['Contact Information'] || 'N/A'}`\n      },\n      {\n        type: \"mrkdwn\",\n        text: `*Services:*\\n${vendor['Services Provided'] || 'N/A'}`\n      }\n    ]\n  },\n  {\n    type: \"section\",\n    fields: [\n      {\n        type: \"mrkdwn\",\n        text: `*BAA Status:*\\n${vendor['BAA Status'] || 'Unknown'}`\n      },\n      {\n        type: \"mrkdwn\",\n        text: `*Last Updated:*\\n${vendor['Last Updated'] || 'Unknown'}`\n      }\n    ]\n  },\n  {\n    type: \"section\",\n    text: {\n      type: \"mrkdwn\",\n      text: \"*License Information:*\"\n    }\n  },\n  {\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `Total: *${totalLicenses}*` },\n      { type: \"mrkdwn\", text: `Used: *${usedLicenses}*` },\n      { type: \"mrkdwn\", text: `Remaining: *${remainingLicenses}*` }\n    ]\n  },\n  {\n    type: \"actions\",\n    elements: [\n      {\n        type: \"button\",\n        text: {\n          type: \"plain_text\",\n          text: \"Request More Info\"\n        },\n        value: vendor['Vendor Name'],\n        action_id: \"request_more_info\"\n      }\n    ]\n  }\n];\n\nreturn [{\n  json: {\n    slackMessage: {\n      channel: channelId,\n      text: \"Vendor Information\",\n      blocks\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1240,
+        -80
+      ],
+      "id": "c4d2277a-ca06-4b56-9c08-f0860560b02e",
+      "name": "Format Response"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1) Parse every item.json.data (JSON-encoded string) into a JS object\nconst vendorObjects = items.map(item => {\n  const raw = item.json.data;\n  if (typeof raw === 'string') {\n    try {\n      return JSON.parse(raw);\n    } catch (e) {\n      console.warn('Failed to JSON.parse row:', raw);\n      return {};\n    }\n  } else if (typeof raw === 'object') {\n    return raw;\n  } else {\n    return {};\n  }\n});\n\n// 2) Pull the user’s query from the Extract Query node\nconst rawQuery = $node[\"Extract Query\"].json.vendorQuery || \"\";\nconst query = rawQuery.toString().toLowerCase().trim();\n\n// 3) Collect all possible keys and pick the one containing “vendor”\nconst allKeys = vendorObjects.length\n  ? Object.keys(vendorObjects[0])\n  : [];\nconst vendorKey = allKeys.find(k => /vendor/i.test(k)) || allKeys[0] || '';\nif (!vendorKey) {\n  throw new Error('Cannot find any vendor column in sheet data');\n}\n\n// 4) First pass: substring match\nconst substringMatches = vendorObjects.filter(v => {\n  const name = (v[vendorKey] || '')\n    .toString()\n    .toLowerCase()\n    .trim();\n  return query && name.includes(query);\n});\n\n// 5) If none, second pass: fuzzy (Levenshtein ≤ 3)\nlet finalMatches = substringMatches;\nlet matchType = substringMatches.length ? 'substring' : 'none';\n\nif (!substringMatches.length && query) {\n  const fuzzy = vendorObjects.filter(v => {\n    const name = (v[vendorKey] || '')\n      .toString()\n      .toLowerCase()\n      .trim();\n    return (\n      name.includes(query) ||\n      levenshteinDistance(name, query) <= 3\n    );\n  });\n  if (fuzzy.length) {\n    finalMatches = fuzzy;\n    matchType = 'fuzzy';\n  }\n}\n\n// 6) Return one item, paired to the first incoming item\nreturn [\n  {\n    json: {\n      results: finalMatches,\n      query,\n      matchType,\n      totalVendors: vendorObjects.length\n    },\n    pairedItem: 0\n  }\n];\n\n// 7) Levenshtein helper\nfunction levenshteinDistance(a, b) {\n  const dp = Array(b.length + 1).fill(null).map(() =>\n    Array(a.length + 1).fill(null)\n  );\n  for (let i = 0; i <= a.length; i++) dp[0][i] = i;\n  for (let j = 0; j <= b.length; j++) dp[j][0] = j;\n  for (let j = 1; j <= b.length; j++) {\n    for (let i = 1; i <= a.length; i++) {\n      const cost = a[i - 1] === b[j - 1] ? 0 : 1;\n      dp[j][i] = Math.min(\n        dp[j][i - 1] + 1,\n        dp[j - 1][i] + 1,\n        dp[j - 1][i - 1] + cost\n      );\n    }\n  }\n  return dp[b.length][a.length];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        -80
+      ],
+      "id": "7f4ef84d-047f-475d-b2b2-03798b1ae1ac",
+      "name": "Exact-Fuzzy"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "5e86d793-4c41-4e0b-84e8-8ecc6308dc91",
+              "name": "vendorQuery",
+              "value": "={{$json[\"body\"][\"text\"]}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        380,
+        -120
+      ],
+      "id": "e8f33904-fd09-4491-bae3-f65c326c88df",
+      "name": "Extract Query"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cec55caa-0d4a-4437-ad3b-a78b14bb93bc",
+              "name": "data",
+              "value": "={{$json}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        780,
+        -100
+      ],
+      "id": "c56b1551-13ee-4703-999a-62e4be8a6d77",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "respondWith": "noData",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.2,
+      "position": [
+        1860,
+        -80
+      ],
+      "id": "1dc613df-d4fd-4b9d-9f38-d5be63aa7e0f",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/slack",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        -100
+      ],
+      "id": "353722ba-47eb-40dd-ad13-d9e06cf8e5f8",
+      "name": "Webhook",
+      "webhookId": "50fe3b16-8bc2-4ed2-9885-b0ffc90a7131"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://slack.com/api/chat.postMessage",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "slackApi",
+        "sendHeaders": true,
+        "specifyHeaders": "json",
+        "jsonHeaders": "{\n  \"Content-Type\": \"application/json; charset=utf-8\"\n}",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "channel",
+              "value": "={{ $('Webhook').item.json.body.channel_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{$json.slackMessage.text}}"
+            },
+            {
+              "name": "blocks",
+              "value": "={{$json.slackMessage.blocks}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        -80
+      ],
+      "id": "0775ecee-c750-4705-a69f-477c55ff16a1",
+      "name": "HTTP Request",
+      "credentials": {
+        "oAuth2Api": {
+          "id": "Xxal278CYEwKEJfo",
+          "name": "Unnamed credential"
+        },
+        "slackApi": {
+          "id": "V98Xg2BdPuRRBYFZ",
+          "name": "Slack account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/slack-actions",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        200
+      ],
+      "id": "c381167a-351b-4efc-980d-5038dd911ccb",
+      "name": "Slack Actions",
+      "webhookId": "b8d03338-a996-4172-94fc-4f3bef0e92a2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Slack posts URL-encoded: body.payload is a JSON string\nconst raw = items[0].json.body?.payload || items[0].json.payload;\nconst payload = JSON.parse(raw);\nreturn [{ json: payload }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        180
+      ],
+      "id": "6aa82657-881c-4b1c-98c5-2f657869306a",
+      "name": "Parse Action Payload"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7892abef-469e-439d-b432-d988b82bbf59",
+              "name": "vendorName",
+              "value": "={{$json.actions[0].value}}",
+              "type": "string"
+            },
+            {
+              "id": "3a08b16d-d055-4931-8a3d-f47dad3386c2",
+              "name": "responseUrl",
+              "value": "={{$json.response_url}}",
+              "type": "string"
+            },
+            {
+              "id": "5acfa409-c53e-4c5f-826b-3bc6b209e83c",
+              "name": "channelId",
+              "value": "`={{$json.channel.id",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        720,
+        180
+      ],
+      "id": "cde56ad3-4b38-42e8-99e1-1365c2005deb",
+      "name": "Extract Info"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/15umhxyT5pojeRS7pR_KcYFZp4JaHJ8f2hHURqql_rMg/edit?gid=63542712#gid=63542712",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sheet2",
+          "mode": "name"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Vendor Name",
+              "lookupValue": "={{$node[\"Extract Info\"].json.vendorName}}"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1000,
+        200
+      ],
+      "id": "5749bba5-9a26-4fea-a9ea-03a9821c4a05",
+      "name": "GS More Info",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Lz2wgjs5MqvirRfO",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "6f6d093c-cbb7-42de-a2cb-4b4ad68ba5dd",
+              "name": "moreInformation",
+              "value": "={{ $json[\"More Information\"] }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1220,
+        200
+      ],
+      "id": "3208a673-0433-40e1-ac20-6e1864f44bdd",
+      "name": "Grab MoreInfo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$node[\"Extract Info\"].json.responseUrl}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "body": "={{\n  JSON.stringify({\n    replace_original: false,\n    text: `Additional details for *${$node[\"Extract Info\"].json.vendorName}*:`,\n    blocks: [\n      {\n        type: \"section\",\n        text: {\n          type: \"mrkdwn\",\n          // include vendorName right in the heading\n          text: `*${$node[\"Extract Info\"].json.vendorName}* — *More Information:*\\n` +\n                `${$node[\"Grab MoreInfo\"].json.moreInformation || \"N/A\"}`\n        }\n      }\n    ]\n  })\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1480,
+        220
+      ],
+      "id": "c050360b-b303-4a06-bb32-76e9d2406488",
+      "name": "Post MoreInfo"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exact-Fuzzy": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Query": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Exact-Fuzzy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Actions": {
+      "main": [
+        [
+          {
+            "node": "Parse Action Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Action Payload": {
+      "main": [
+        [
+          {
+            "node": "Extract Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Info": {
+      "main": [
+        [
+          {
+            "node": "GS More Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GS More Info": {
+      "main": [
+        [
+          {
+            "node": "Grab MoreInfo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Grab MoreInfo": {
+      "main": [
+        [
+          {
+            "node": "Post MoreInfo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post MoreInfo": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6462bde4-1597-4e81-b897-58bc11b1275b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "74749c04e8013dbd1bd718052e52bd30815cbd8e3e4fae0947221388b864986d"
+  },
+  "id": "U6mJry9a2FRa5HPl",
+  "tags": []
+}
