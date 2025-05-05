@@ -1,6 +1,6 @@
 # 🔧 Automations & Media Tools Portfolio
 
-*"From low‑code vendor governance to an AI‑powered photo library, here's how I build pragmatic solutions that save teams hours every week."*
+*"Transforming business workflows through AI-driven automation: From enterprise vendor governance to intelligent media management, I architect elegant solutions that turn 20-hour tasks into 20-second commands."*
 
 ## 📑 Table of Contents
 
