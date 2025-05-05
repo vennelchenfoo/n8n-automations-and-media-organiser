@@ -1,0 +1,233 @@
+{
+  "name": "Vendor Risk Assessment 2.0",
+  "nodes": [
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "deepseek/deepseek-r1:free",
+          "mode": "list",
+          "cachedResultName": "DEEPSEEK/DEEPSEEK-R1:FREE"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "You are a vendor risk compliance assistant. Reference internal policies (SOC2, ISO27001, GDPR) and our “Vendor Risk Guidelines.”\n",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.parameters.messages[1].content }}",
+              "role": "system"
+            },
+            {
+              "content": "={{ $json.parameters.messages[2].content }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c019ddcd-6031-43d4-b591-adee5d4b6a07",
+      "name": "OpenAI1",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.8,
+      "position": [
+        940,
+        460
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "Dpe6NFfMNXtCG94e",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/slack",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        460
+      ],
+      "id": "54c290a8-95f2-41b4-b8dd-53c47ccac347",
+      "name": "Webhook1",
+      "webhookId": "606ffd12-9b5e-4e8e-bba0-ad3459f49dcb"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"id\": \"e86ef2ee-f42e-4c68-bc3c-6e3c7e809a0d\",\n  \"name\": \"Extract Vendor Name\",\n  \"type\": \"n8n-nodes-base.set\",\n  \"typeVersion\": 3.4,\n  \"position\": [60, 460],\n  \"parameters\": {\n    \"keepOnlySet\": true,\n    \"values\": {\n      \"string\": [\n        {\n          \"name\": \"vendor\",\n          \"value\": \"{{ $node['Webhook1'].json.body.text || 'Unknown Vendor' }}\"\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        60,
+        460
+      ],
+      "id": "e86ef2ee-f42e-4c68-bc3c-6e3c7e809a0d",
+      "name": "Extract Vendor Name"
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"id\": \"c5f9a1d2-1234-4bcd-9e8f-abcdef012345\",\n  \"name\": \"Build AI Prompt\",\n  \"type\": \"n8n-nodes-base.openai\",\n  \"typeVersion\": 1,\n  \"position\": [460, 460],\n  \"credentials\": {\n    \"openAIApi\": {\n      \"id\": \"1\",\n      \"name\": \"OpenAI API Key\"\n    }\n  },\n  \"parameters\": {\n    \"model\": \"openchat/openchat-3.5-0106\",\n    \"operation\": \"sendMessage\",\n    \"messages\": [\n      {\n        \"role\": \"system\",\n        \"content\": \"You are a vendor risk compliance assistant. Reference internal policy and standard frameworks (SOC2, ISO27001, GDPR).\"\n      },\n      {\n        \"role\": \"system\",\n        \"content\": \"Internal policy document (for reference):{{ $('Extract Vendor Name').item.json.parameters.values.string[0].value }}\"\n      },\n      {\n        \"role\": \"user\",\n        \"content\": \"=Create a Vendor Risk Assessment for {{ $('Extract Vendor Name').item.json.parameters.values.string[0].value }}. Format: Overview, Compliance Requirements, Technical & Operational Risks, Security & Compliance Gaps, Recommendations.'\\n}}\"\n      }\n    ]\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        600,
+        480
+      ],
+      "id": "06e13c8f-8eaa-4ae5-a7c7-571f765324a0",
+      "name": "Build AI Prompt"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "={{ $('Webhook1').item.json.body.channel_id }}",
+          "mode": "id"
+        },
+        "text": "={{ $('OpenAI1').item.json.message.content }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.3,
+      "position": [
+        1500,
+        480
+      ],
+      "id": "5c84cf20-45b1-499b-bf3c-d2a30cb2171a",
+      "name": "Slack",
+      "webhookId": "2a7c48b7-0a5c-404a-b5c2-418c8bef4e2a",
+      "credentials": {
+        "slackApi": {
+          "id": "V98Xg2BdPuRRBYFZ",
+          "name": "Slack account 3"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"parameters\": {\n    \"functionCode\": \"// grab the raw output\\nconst res = $node[\\\"OpenAI1\\\"].json;\\n\\n// try the most common spots\\nlet content;\\nif (res.choices) {\\n  // raw API response\\n  content = res.choices[0].message.content;\\n} else if (res.response && res.response.choices) {\\n  // LangChain wrapper\\n  content = res.response.choices[0].message.content;\\n} else if (res.text) {\\n  // some nodes expose `.text`\\n  content = res.text;\\n} else {\\n  // fallback: stringify entire payload so you can see what’s in it\\n  content = `⚠️ Couldn’t find content – full payload:\\\\n${JSON.stringify(res, null, 2)}`;\\n}\\n\\nreturn [{ assessment: content }];\"\n  },\n  \"name\": \"Extract Assessment\",\n  \"type\": \"n8n-nodes-base.function\",\n  \"typeVersion\": 1,\n  \"position\": [\n    920,\n    480\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1280,
+        480
+      ],
+      "id": "58a4b71a-4b0d-47d5-908f-a460b0b7674d",
+      "name": "Extract Assessment"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "documentURL": "https://docs.google.com/document/d/1jGTiDyG6rS-T5thFziK-Uc13XG-6gNgNJpWOyb9xWgg/edit?tab=t.0"
+      },
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [
+        280,
+        460
+      ],
+      "id": "a01380d8-d76c-48e8-bdb2-3358879b59a8",
+      "name": "Fetch Policies",
+      "credentials": {
+        "googleDocsOAuth2Api": {
+          "id": "SnyReUM9kDOic8it",
+          "name": "Google Docs account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OpenAI1": {
+      "main": [
+        [
+          {
+            "node": "Extract Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Extract Vendor Name",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Vendor Name": {
+      "main": [
+        [
+          {
+            "node": "Fetch Policies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build AI Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Assessment": {
+      "main": [
+        [
+          {
+            "node": "Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Policies": {
+      "main": [
+        [
+          {
+            "node": "Build AI Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "39f16961-3435-4b29-90f4-40276e46204a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "74749c04e8013dbd1bd718052e52bd30815cbd8e3e4fae0947221388b864986d"
+  },
+  "id": "7YTVHnecTLGSXyah",
+  "tags": []
+}
